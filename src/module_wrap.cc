@@ -99,7 +99,7 @@ ModuleCacheKey ModuleCacheKey::From(Local<Context> context,
                                     Local<String> specifier,
                                     Local<FixedArray> import_attributes) {
   CHECK_EQ(import_attributes->Length() % elements_per_attribute, 0);
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   std::size_t h1 = specifier->GetIdentityHash();
   size_t num_attributes = import_attributes->Length() / elements_per_attribute;
   ImportAttributeVector attributes;
@@ -144,12 +144,12 @@ ModuleWrap::ModuleWrap(Realm* realm,
                        Local<Object> context_object,
                        Local<Value> synthetic_evaluation_step)
     : BaseObject(realm, object),
+      url_(Utf8Value(realm->isolate(), url).ToString()),
       module_(realm->isolate(), module),
       module_hash_(module->GetIdentityHash()) {
   realm->env()->hash_to_module_map.emplace(module_hash_, this);
 
   object->SetInternalField(kModuleSlot, module);
-  object->SetInternalField(kURLSlot, url);
   object->SetInternalField(kModuleSourceObjectSlot,
                            v8::Undefined(realm->isolate()));
   object->SetInternalField(kSyntheticEvaluationStepsSlot,
@@ -968,8 +968,7 @@ void ModuleWrap::GetModuleSourceObject(
       obj->object()->GetInternalField(kModuleSourceObjectSlot).As<Value>();
 
   if (module_source_object->IsUndefined()) {
-    Local<String> url = obj->object()->GetInternalField(kURLSlot).As<String>();
-    THROW_ERR_SOURCE_PHASE_NOT_DEFINED(isolate, url);
+    THROW_ERR_SOURCE_PHASE_NOT_DEFINED(isolate, obj->url_);
     return;
   }
 
@@ -1022,7 +1021,7 @@ MaybeLocal<Module> ModuleWrap::ResolveModuleCallback(
     return {};
   }
   DCHECK_NOT_NULL(resolved_module);
-  return resolved_module->module_.Get(context->GetIsolate());
+  return resolved_module->module_.Get(Isolate::GetCurrent());
 }
 
 // static
@@ -1043,10 +1042,8 @@ MaybeLocal<Object> ModuleWrap::ResolveSourceCallback(
           ->GetInternalField(ModuleWrap::kModuleSourceObjectSlot)
           .As<Value>();
   if (module_source_object->IsUndefined()) {
-    Local<String> url = resolved_module->object()
-                            ->GetInternalField(ModuleWrap::kURLSlot)
-                            .As<String>();
-    THROW_ERR_SOURCE_PHASE_NOT_DEFINED(context->GetIsolate(), url);
+    THROW_ERR_SOURCE_PHASE_NOT_DEFINED(Isolate::GetCurrent(),
+                                       resolved_module->url_);
     return {};
   }
   CHECK(module_source_object->IsObject());
@@ -1059,7 +1056,7 @@ Maybe<ModuleWrap*> ModuleWrap::ResolveModule(
     Local<String> specifier,
     Local<FixedArray> import_attributes,
     Local<Module> referrer) {
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   Environment* env = Environment::GetCurrent(context);
   if (env == nullptr) {
     THROW_ERR_EXECUTION_ENVIRONMENT_NOT_AVAILABLE(isolate);
@@ -1078,17 +1075,21 @@ Maybe<ModuleWrap*> ModuleWrap::ResolveModule(
     return Nothing<ModuleWrap*>();
   }
   if (!dependent->IsLinked()) {
-    THROW_ERR_VM_MODULE_LINK_FAILURE(
-        env,
-        "request for '%s' is from a module not been linked",
-        cache_key.specifier);
+    THROW_ERR_VM_MODULE_LINK_FAILURE(env,
+                                     "request for '%s' can not be resolved on "
+                                     "module '%s' that is not linked",
+                                     cache_key.specifier,
+                                     dependent->url_);
     return Nothing<ModuleWrap*>();
   }
 
   auto it = dependent->resolve_cache_.find(cache_key);
   if (it == dependent->resolve_cache_.end()) {
     THROW_ERR_VM_MODULE_LINK_FAILURE(
-        env, "request for '%s' is not in cache", cache_key.specifier);
+        env,
+        "request for '%s' is not cached on module '%s'",
+        cache_key.specifier,
+        dependent->url_);
     return Nothing<ModuleWrap*>();
   }
 
@@ -1104,7 +1105,7 @@ static MaybeLocal<Promise> ImportModuleDynamicallyWithPhase(
     Local<String> specifier,
     ModuleImportPhase phase,
     Local<FixedArray> import_attributes) {
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   Environment* env = Environment::GetCurrent(context);
   if (env == nullptr) {
     THROW_ERR_EXECUTION_ENVIRONMENT_NOT_AVAILABLE(isolate);
@@ -1343,7 +1344,7 @@ MaybeLocal<Module> LinkRequireFacadeWithOriginal(
     Local<FixedArray> import_attributes,
     Local<Module> referrer) {
   Environment* env = Environment::GetCurrent(context);
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   CHECK(specifier->Equals(context, env->original_string()).ToChecked());
   CHECK(!env->temporary_required_module_facade_original.IsEmpty());
   return env->temporary_required_module_facade_original.Get(isolate);

@@ -883,9 +883,11 @@ node --entry-url 'data:text/javascript,console.log("Hello")'
 
 <!-- YAML
 added: v22.9.0
+changes:
+  - version: v24.10.0
+    pr-url: https://github.com/nodejs/node/pull/59925
+    description: The `--env-file-if-exists` flag is no longer experimental.
 -->
-
-> Stability: 1.1 - Active development
 
 Behavior is the same as [`--env-file`][], but an error is not thrown if the file
 does not exist.
@@ -895,14 +897,15 @@ does not exist.
 <!-- YAML
 added: v20.6.0
 changes:
+  - version: v24.10.0
+    pr-url: https://github.com/nodejs/node/pull/59925
+    description: The `--env-file` flag is no longer experimental.
   - version:
     - v21.7.0
     - v20.12.0
     pr-url: https://github.com/nodejs/node/pull/51289
     description: Add support to multi-line values.
 -->
-
-> Stability: 1.1 - Active development
 
 Loads environment variables from a file relative to the current directory,
 making them available to applications on `process.env`. The [environment
@@ -1762,13 +1765,16 @@ changes:
 
 Specify the maximum size, in bytes, of HTTP headers. Defaults to 16 KiB.
 
-### `--max-old-space-size-percentage=PERCENTAGE`
+### `--max-old-space-size-percentage=percentage`
 
-Sets the max memory size of V8's old memory section as a percentage of available system memory.
+Sets the maximum memory size of V8's old memory section as a percentage of available system memory.
 This flag takes precedence over `--max-old-space-size` when both are specified.
 
-The `PERCENTAGE` parameter must be a number greater than 0 and up to 100. representing the percentage
+The `percentage` parameter must be a number greater than 0 and up to 100, representing the percentage
 of available system memory to allocate to the V8 heap.
+
+**Note:** This flag utilizes `--max-old-space-size`, which may be unreliable on 32-bit platforms due to
+integer overflow issues.
 
 ```bash
 # Using 50% of available system memory
