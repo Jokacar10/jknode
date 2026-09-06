@@ -32,4 +32,17 @@ jobs:
       - name: Validate commit message
         run: |
           echo "::add-matcher::.github/workflows/commit-lint-problem-matcher.json"
-          git rev-parse HEAD~${{ steps.nb-of-commits.outputs.minusOne }} | xargs npx -q core-validate-commit --no-validate-metadata --tap
+          FIRST_NON_BOT_COMMIT=$(git rev-list --reverse HEAD~${{ steps.nb-of-commits.outputs.minusOne }}..HEAD | while read -r commit; do
+            author=$(git show -s --format=%an "$commit")
+            if [[ ! "$author" =~ \[bot\]$ ]]; then
+              echo "$commit"
+              break
+            fi
+          done)
+
+          if [ -z "$FIRST_NON_BOT_COMMIT" ]; then
+            echo "No non-bot commits found in the pull request, skipping commit message validation."
+            exit 0
+          fi
+
+          echo "$FIRST_NON_BOT_COMMIT" | xargs npx -q core-validate-commit --no-validate-metadata --tap
