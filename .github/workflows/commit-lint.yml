@@ -42,8 +42,7 @@ jobs:
               per_page: 100,
             });
             const firstNonBotCommit = commits.find((commit) =>
-              commit.author?.type !== 'Bot' &&
-              commit.committer?.type !== 'Bot');
+              commit.author?.type !== 'Bot');
             core.setOutput('sha', firstNonBotCommit?.sha || '');
       - name: Validate commit message
         run: |
