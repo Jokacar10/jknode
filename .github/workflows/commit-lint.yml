@@ -10,6 +10,7 @@ env:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   lint-commit-message:
@@ -29,7 +30,37 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Find first non-bot commit
+        id: first-non-bot-commit
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const isBotAccount = (account) =>
+              account?.type === 'Bot' || /\[bot\]$/.test(account?.login || '');
+            const isBotCommit = (commit) => {
+              if (isBotAccount(commit.author) || isBotAccount(commit.committer)) {
+                return true;
+              }
+              if (commit.author || commit.committer) {
+                return false;
+              }
+              return /\[bot\]$/.test(commit.commit.author.name) ||
+                /\[bot\]@users\.noreply\.github\.com$/.test(commit.commit.author.email);
+            };
+            const firstNonBotCommit = commits.find((commit) => !isBotCommit(commit));
+            core.setOutput('sha', firstNonBotCommit?.sha || '');
       - name: Validate commit message
         run: |
           echo "::add-matcher::.github/workflows/commit-lint-problem-matcher.json"
-          git rev-parse HEAD~${{ steps.nb-of-commits.outputs.minusOne }} | xargs npx -q core-validate-commit --no-validate-metadata --tap
+          if [ -z "${{ steps.first-non-bot-commit.outputs.sha }}" ]; then
+            echo "No non-bot commits found in the pull request, skipping commit message validation."
+            exit 0
+          fi
+
+          echo "${{ steps.first-non-bot-commit.outputs.sha }}" | xargs npx -q core-validate-commit --no-validate-metadata --tap
