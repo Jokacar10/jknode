@@ -41,8 +41,11 @@ jobs:
               pull_number: context.payload.pull_request.number,
               per_page: 100,
             });
-            const firstNonBotCommit = commits.find((commit) =>
-              commit.author?.type !== 'Bot');
+            const isBotCommit = (commit) =>
+              commit.author?.type === 'Bot' ||
+              /\[bot\]$/.test(commit.commit.author.name) ||
+              /\[bot\]@users\.noreply\.github\.com$/.test(commit.commit.author.email);
+            const firstNonBotCommit = commits.find((commit) => !isBotCommit(commit));
             core.setOutput('sha', firstNonBotCommit?.sha || '');
       - name: Validate commit message
         run: |
