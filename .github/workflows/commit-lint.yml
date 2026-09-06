@@ -41,10 +41,18 @@ jobs:
               pull_number: context.payload.pull_request.number,
               per_page: 100,
             });
-            const isBotCommit = (commit) =>
-              commit.author?.type === 'Bot' ||
-              /\[bot\]$/.test(commit.commit.author.name) ||
-              /\[bot\]@users\.noreply\.github\.com$/.test(commit.commit.author.email);
+            const isBotAccount = (account) =>
+              account?.type === 'Bot' || /\[bot\]$/.test(account?.login || '');
+            const isBotCommit = (commit) => {
+              if (isBotAccount(commit.author) || isBotAccount(commit.committer)) {
+                return true;
+              }
+              if (commit.author || commit.committer) {
+                return false;
+              }
+              return /\[bot\]$/.test(commit.commit.author.name) ||
+                /\[bot\]@users\.noreply\.github\.com$/.test(commit.commit.author.email);
+            };
             const firstNonBotCommit = commits.find((commit) => !isBotCommit(commit));
             core.setOutput('sha', firstNonBotCommit?.sha || '');
       - name: Validate commit message
