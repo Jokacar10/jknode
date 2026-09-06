@@ -33,8 +33,8 @@ jobs:
         run: |
           echo "::add-matcher::.github/workflows/commit-lint-problem-matcher.json"
           FIRST_NON_BOT_COMMIT=$(git rev-list --reverse HEAD~${{ steps.nb-of-commits.outputs.minusOne }}..HEAD | while read -r commit; do
-            author=$(git show -s --format=%an "$commit")
-            if [[ ! "$author" =~ \[bot\]$ ]]; then
+            commit_metadata=$(git show -s --format='%an %ae %cn %ce' "$commit")
+            if [[ ! "$commit_metadata" =~ \[bot\] ]]; then
               echo "$commit"
               break
             fi
