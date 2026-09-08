@@ -11,7 +11,7 @@ See [test/wpt](../../wpt/README.md) for information on how these tests are run.
 Last update:
 
 - common: https://github.com/web-platform-tests/wpt/tree/dbd648158d/common
-- compression: https://github.com/web-platform-tests/wpt/tree/67880a4eb8/compression
+- compression: https://github.com/web-platform-tests/wpt/tree/ae05f5cb53/compression
 - console: https://github.com/web-platform-tests/wpt/tree/e48251b778/console
 - dom/abort: https://github.com/web-platform-tests/wpt/tree/dc928169ee/dom/abort
 - dom/events: https://github.com/web-platform-tests/wpt/tree/0a811c5161/dom/events
@@ -23,18 +23,18 @@ Last update:
 - html/webappapis/microtask-queuing: https://github.com/web-platform-tests/wpt/tree/2c5c3c4c27/html/webappapis/microtask-queuing
 - html/webappapis/structured-clone: https://github.com/web-platform-tests/wpt/tree/47d3fb280c/html/webappapis/structured-clone
 - html/webappapis/timers: https://github.com/web-platform-tests/wpt/tree/5873f2d8f1/html/webappapis/timers
-- interfaces: https://github.com/web-platform-tests/wpt/tree/e1b27be06b/interfaces
+- interfaces: https://github.com/web-platform-tests/wpt/tree/a8392bd021/interfaces
 - performance-timeline: https://github.com/web-platform-tests/wpt/tree/94caab7038/performance-timeline
 - resource-timing: https://github.com/web-platform-tests/wpt/tree/22d38586d0/resource-timing
-- resources: https://github.com/web-platform-tests/wpt/tree/1d2c5fb36a/resources
-- streams: https://github.com/web-platform-tests/wpt/tree/bc9dcbbf1a/streams
-- url: https://github.com/web-platform-tests/wpt/tree/efb889eb4c/url
-- urlpattern: https://github.com/web-platform-tests/wpt/tree/a2e15ad405/urlpattern
+- resources: https://github.com/web-platform-tests/wpt/tree/6a2f322376/resources
+- streams: https://github.com/web-platform-tests/wpt/tree/f8f26a372f/streams
+- url: https://github.com/web-platform-tests/wpt/tree/7a3645b79a/url
+- urlpattern: https://github.com/web-platform-tests/wpt/tree/f07c03cbed/urlpattern
 - user-timing: https://github.com/web-platform-tests/wpt/tree/5ae85bf826/user-timing
-- wasm/jsapi: https://github.com/web-platform-tests/wpt/tree/cde25e7e3c/wasm/jsapi
+- wasm/jsapi: https://github.com/web-platform-tests/wpt/tree/65a2134d50/wasm/jsapi
 - wasm/webapi: https://github.com/web-platform-tests/wpt/tree/fd1b23eeaa/wasm/webapi
 - web-locks: https://github.com/web-platform-tests/wpt/tree/10a122a6bc/web-locks
-- WebCryptoAPI: https://github.com/web-platform-tests/wpt/tree/7cbe7e8ed9/WebCryptoAPI
+- WebCryptoAPI: https://github.com/web-platform-tests/wpt/tree/2cb332d710/WebCryptoAPI
 - webidl: https://github.com/web-platform-tests/wpt/tree/63ca529a02/webidl
 - webidl/ecmascript-binding/es-exceptions: https://github.com/web-platform-tests/wpt/tree/2f96fa1996/webidl/ecmascript-binding/es-exceptions
 - webmessaging/broadcastchannel: https://github.com/web-platform-tests/wpt/tree/6495c91853/webmessaging/broadcastchannel

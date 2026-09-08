@@ -395,8 +395,7 @@ The accepted values are:
 
 If the `mainFormat` field is not specified, it defaults to `"commonjs"`.
 
-Currently, `"mainFormat": "module"` cannot be used together with `"useSnapshot"`
-or `"useCodeCache"`.
+Currently, `"mainFormat": "module"` cannot be used together with `"useSnapshot"`.
 
 ### Module loading in the injected main script
 
@@ -411,6 +410,8 @@ into the executable. This also ensures a more deterministic dependency graph.
 To load modules from the file system in the injected main script, users can
 create a `require` function that can load from the file system using
 `module.createRequire()`. For example, in a CommonJS entry point:
+
+<!-- eslint-disable no-global-assign -->
 
 ```js
 const { createRequire } = require('node:module');
