@@ -18,7 +18,7 @@ const { hostname } = require('node:os');
  * Group 6: Line end (including color codes and `{` which indicates the start of an error object details)
  */
 // Mappings:                              (g1                             )   (g2 )          (g3      ) (g4 )    (g5 )      (g6                       )
-const internalStackFramesRegexp = /(?<=\n)(\s*(?:\x1b?\[\d+m\s+)?(?:at\s)?)(?:(.+?)\s+\()?(?:(node:.+?):(\d+)(?::(\d+))?)\)?((?:\x1b?\[\d+m)?\s*{?\n|$)/g;
+const internalStackFramesRegexp = /(?<=\n)(\s*(?:\x1b?\[\d+m\s+)?(?:at\s+)?)(?:async\s+)?(?:(.+?)\s+\()?(?:(node:.+?):(\d+)(?::(\d+))?)\)?((?:\x1b?\[\d+m)?\s*{?\n|$)/g;
 /**
  * Group 1: Filename
  * Group 2: Line number
@@ -226,6 +226,7 @@ function replaceJunitDuration(str) {
     .replaceAll(/time="[0-9.]+"/g, 'time="*"')
     .replaceAll(/duration_ms [0-9.]+/g, 'duration_ms *')
     .replaceAll(`hostname="${hostname()}"`, 'hostname="HOSTNAME"')
+    .replaceAll(/timestamp="[^"]*"/g, 'timestamp="*"')
     .replaceAll(/file="[^"]*"/g, 'file="*"');
 }
 
@@ -234,13 +235,30 @@ function replaceJunitDuration(str) {
 // This transform picks only the first line and then the lines from the test
 // file.
 function pickTestFileFromLcov(str) {
+  const expectedFile = 'output.js';
   const lines = str.split(/\n/);
   const firstLineOfTestFile = lines.findIndex(
-    (line) => line.startsWith('SF:') && line.trim().endsWith('output.js'),
+    (line) => line.startsWith('SF:') && line.trim().endsWith(expectedFile),
   );
+
+  if (firstLineOfTestFile === -1) {
+    assert.fail(
+      `Could not find LCOV source record ending with ${expectedFile} ` +
+      `in LCOV output:\n${str || '<empty>'}`,
+    );
+  }
+
   const lastLineOfTestFile = lines.findIndex(
     (line, index) => index > firstLineOfTestFile && line.trim() === 'end_of_record',
   );
+
+  if (lastLineOfTestFile === -1) {
+    assert.fail(
+      `Could not find end_of_record for LCOV source record ending with ${expectedFile} ` +
+      `in LCOV output:\n${str}`,
+    );
+  }
+
   return (
     lines[0] + '\n' + lines.slice(firstLineOfTestFile, lastLineOfTestFile + 1).join('\n') + '\n'
   );

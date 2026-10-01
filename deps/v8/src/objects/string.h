@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 
+#include "simdutf.h"
 #include "src/base/bits.h"
 #include "src/base/export-template.h"
 #include "src/base/small-vector.h"
@@ -21,7 +22,6 @@
 #include "src/objects/tagged.h"
 #include "src/sandbox/external-pointer.h"
 #include "src/strings/unicode-decoder.h"
-#include "third_party/simdutf/simdutf.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -522,6 +522,7 @@ V8_OBJECT class String : public Name {
   // ~536.8M chars.
   // See include/v8.h for the definition.
   static const uint32_t kMaxLength = v8::String::kMaxLength;
+  static_assert(kMaxLength <= kMaxInt);
 
   // Max length for computing hash. For strings longer than this limit the
   // string length is used as the hash value.

@@ -1,11 +1,25 @@
 'use strict'
 
+const { RequestAbortedError } = require('../core/errors')
+
 /**
  * @typedef {import('../../types/dispatcher.d.ts').default.DispatchHandler} DispatchHandler
  */
 
+const DEFAULT_MAX_BUFFER_SIZE = 5 * 1024 * 1024
+
 /**
- * Handler that buffers response data and notifies multiple waiting handlers.
+ * @typedef {Object} WaitingHandler
+ * @property {DispatchHandler} handler
+ * @property {import('../../types/dispatcher.d.ts').default.DispatchController} controller
+ * @property {Buffer[]} bufferedChunks
+ * @property {number} bufferedBytes
+ * @property {object | null} pendingTrailers
+ * @property {boolean} done
+ */
+
+/**
+ * Handler that forwards response events to multiple waiting handlers.
  * Used for request deduplication.
  *
  * @implements {DispatchHandler}
@@ -17,14 +31,14 @@ class DeduplicationHandler {
   #primaryHandler
 
   /**
-   * @type {DispatchHandler[]}
+   * @type {WaitingHandler[]}
    */
   #waitingHandlers = []
 
   /**
-   * @type {Buffer[]}
+   * @type {number}
    */
-  #chunks = []
+  #maxBufferSize = DEFAULT_MAX_BUFFER_SIZE
 
   /**
    * @type {number}
@@ -47,6 +61,21 @@ class DeduplicationHandler {
   #aborted = false
 
   /**
+   * @type {boolean}
+   */
+  #responseStarted = false
+
+  /**
+   * @type {boolean}
+   */
+  #responseDataStarted = false
+
+  /**
+   * @type {boolean}
+   */
+  #completed = false
+
+  /**
    * @type {import('../../types/dispatcher.d.ts').default.DispatchController | null}
    */
   #controller = null
@@ -59,22 +88,60 @@ class DeduplicationHandler {
   /**
    * @param {DispatchHandler} primaryHandler The primary handler
    * @param {() => void} onComplete Callback when request completes
+   * @param {number} [maxBufferSize] Maximum paused buffer size per waiting handler
    */
-  constructor (primaryHandler, onComplete) {
+  constructor (primaryHandler, onComplete, maxBufferSize = DEFAULT_MAX_BUFFER_SIZE) {
     this.#primaryHandler = primaryHandler
     this.#onComplete = onComplete
+    this.#maxBufferSize = maxBufferSize
   }
 
   /**
-   * Add a waiting handler that will receive the buffered response
+   * Add a waiting handler that will receive response events.
+   * Returns false if deduplication can no longer safely attach this handler.
+   *
    * @param {DispatchHandler} handler
+   * @returns {boolean}
    */
   addWaitingHandler (handler) {
-    this.#waitingHandlers.push(handler)
+    if (this.#completed || this.#responseDataStarted) {
+      return false
+    }
+
+    const waitingHandler = this.#createWaitingHandler(handler)
+    const waitingController = waitingHandler.controller
+
+    try {
+      handler.onRequestStart?.(waitingController, null)
+
+      if (waitingController.aborted) {
+        waitingHandler.done = true
+        return true
+      }
+
+      if (this.#responseStarted) {
+        handler.onResponseStart?.(
+          waitingController,
+          this.#statusCode,
+          this.#headers,
+          this.#statusMessage
+        )
+      }
+    } catch {
+      // Ignore errors from waiting handlers
+      waitingHandler.done = true
+      return true
+    }
+
+    if (!waitingController.aborted) {
+      this.#waitingHandlers.push(waitingHandler)
+    }
+
+    return true
   }
 
   /**
-   * @param {() => void} abort
+   * @param {import('../../types/dispatcher.d.ts').default.DispatchController} controller
    * @param {any} context
    */
   onRequestStart (controller, context) {
@@ -99,10 +166,38 @@ class DeduplicationHandler {
    * @param {string} statusMessage
    */
   onResponseStart (controller, statusCode, headers, statusMessage) {
+    this.#responseStarted = true
     this.#statusCode = statusCode
     this.#headers = headers
     this.#statusMessage = statusMessage
+
     this.#primaryHandler.onResponseStart?.(controller, statusCode, headers, statusMessage)
+
+    for (const waitingHandler of this.#waitingHandlers) {
+      const { handler, controller: waitingController } = waitingHandler
+
+      if (waitingHandler.done || waitingController.aborted) {
+        waitingHandler.done = true
+        continue
+      }
+
+      try {
+        handler.onResponseStart?.(
+          waitingController,
+          statusCode,
+          headers,
+          statusMessage
+        )
+      } catch {
+        // Ignore errors from waiting handlers
+      }
+
+      if (waitingController.aborted) {
+        waitingHandler.done = true
+      }
+    }
+
+    this.#pruneDoneWaitingHandlers()
   }
 
   /**
@@ -110,9 +205,41 @@ class DeduplicationHandler {
    * @param {Buffer} chunk
    */
   onResponseData (controller, chunk) {
-    // Buffer the chunk for waiting handlers
-    this.#chunks.push(Buffer.from(chunk))
+    if (this.#aborted || this.#completed) {
+      return
+    }
+
+    this.#responseDataStarted = true
+
     this.#primaryHandler.onResponseData?.(controller, chunk)
+
+    for (const waitingHandler of this.#waitingHandlers) {
+      const { handler, controller: waitingController } = waitingHandler
+
+      if (waitingHandler.done || waitingController.aborted) {
+        waitingHandler.done = true
+        continue
+      }
+
+      if (waitingController.paused) {
+        this.#bufferWaitingChunk(waitingHandler, chunk)
+        continue
+      }
+
+      try {
+        handler.onResponseData?.(waitingController, chunk)
+      } catch {
+        // Ignore errors from waiting handlers
+      }
+
+      if (waitingController.aborted) {
+        waitingHandler.done = true
+        waitingHandler.bufferedChunks = []
+        waitingHandler.bufferedBytes = 0
+      }
+    }
+
+    this.#pruneDoneWaitingHandlers()
   }
 
   /**
@@ -120,9 +247,44 @@ class DeduplicationHandler {
    * @param {object} trailers
    */
   onResponseEnd (controller, trailers) {
+    if (this.#aborted || this.#completed) {
+      return
+    }
+
+    // Remove the entry before callbacks can synchronously dispatch a retry.
+    this.#cleanup()
     this.#primaryHandler.onResponseEnd?.(controller, trailers)
-    this.#notifyWaitingHandlers()
-    this.#onComplete?.()
+    // A throwing end callback must still be handled by onResponseError.
+    this.#completed = true
+
+    for (const waitingHandler of this.#waitingHandlers) {
+      if (waitingHandler.done || waitingHandler.controller.aborted) {
+        waitingHandler.done = true
+        continue
+      }
+
+      this.#flushWaitingHandler(waitingHandler)
+
+      if (waitingHandler.done || waitingHandler.controller.aborted) {
+        waitingHandler.done = true
+        continue
+      }
+
+      if (waitingHandler.controller.paused) {
+        waitingHandler.pendingTrailers = trailers
+        continue
+      }
+
+      try {
+        waitingHandler.handler.onResponseEnd?.(waitingHandler.controller, trailers)
+      } catch (err) {
+        this.#errorWaitingHandler(waitingHandler, err)
+      }
+
+      waitingHandler.done = true
+    }
+
+    this.#pruneDoneWaitingHandlers()
   }
 
   /**
@@ -130,86 +292,187 @@ class DeduplicationHandler {
    * @param {Error} err
    */
   onResponseError (controller, err) {
+    if (this.#completed) {
+      return
+    }
+
     this.#aborted = true
+    this.#completed = true
+    this.#cleanup()
+
     this.#primaryHandler.onResponseError?.(controller, err)
-    this.#notifyWaitingHandlersError(err)
-    this.#onComplete?.()
-  }
 
-  /**
-   * Notify all waiting handlers with the buffered response
-   */
-  #notifyWaitingHandlers () {
-    const body = Buffer.concat(this.#chunks)
-
-    for (const handler of this.#waitingHandlers) {
-      // Create a simple controller for each waiting handler
-      const waitingController = {
-        resume () {},
-        pause () {},
-        get paused () { return false },
-        get aborted () { return false },
-        get reason () { return null },
-        abort () {}
-      }
-
-      try {
-        handler.onRequestStart?.(waitingController, null)
-
-        if (waitingController.aborted) {
-          continue
-        }
-
-        handler.onResponseStart?.(
-          waitingController,
-          this.#statusCode,
-          this.#headers,
-          this.#statusMessage
-        )
-
-        if (waitingController.aborted) {
-          continue
-        }
-
-        if (body.length > 0) {
-          handler.onResponseData?.(waitingController, body)
-        }
-
-        handler.onResponseEnd?.(waitingController, {})
-      } catch {
-        // Ignore errors from waiting handlers
-      }
+    for (const waitingHandler of this.#waitingHandlers) {
+      this.#errorWaitingHandler(waitingHandler, err)
     }
 
     this.#waitingHandlers = []
-    this.#chunks = []
+  }
+
+  #cleanup () {
+    const onComplete = this.#onComplete
+    this.#onComplete = null
+    onComplete?.()
   }
 
   /**
-   * Notify all waiting handlers of an error
+   * @param {DispatchHandler} handler
+   * @returns {WaitingHandler}
+   */
+  #createWaitingHandler (handler) {
+    /** @type {WaitingHandler} */
+    const waitingHandler = {
+      handler,
+      controller: null,
+      bufferedChunks: [],
+      bufferedBytes: 0,
+      pendingTrailers: null,
+      done: false
+    }
+
+    const state = {
+      aborted: false,
+      paused: false,
+      reason: null
+    }
+
+    waitingHandler.controller = {
+      resume: () => {
+        if (state.aborted) {
+          return
+        }
+
+        state.paused = false
+        this.#flushWaitingHandler(waitingHandler)
+
+        if (
+          this.#completed &&
+          waitingHandler.pendingTrailers &&
+          waitingHandler.bufferedChunks.length === 0 &&
+          !state.paused &&
+          !state.aborted
+        ) {
+          try {
+            waitingHandler.handler.onResponseEnd?.(waitingHandler.controller, waitingHandler.pendingTrailers)
+          } catch (err) {
+            this.#errorWaitingHandler(waitingHandler, err)
+          }
+
+          waitingHandler.pendingTrailers = null
+          waitingHandler.done = true
+        }
+
+        this.#pruneDoneWaitingHandlers()
+      },
+      pause: () => {
+        if (!state.aborted) {
+          state.paused = true
+        }
+      },
+      get paused () { return state.paused },
+      get aborted () { return state.aborted },
+      get reason () { return state.reason },
+      abort: (reason) => {
+        if (state.aborted) {
+          return
+        }
+
+        state.aborted = true
+        state.reason = reason ?? null
+        waitingHandler.done = true
+        waitingHandler.pendingTrailers = null
+        waitingHandler.bufferedChunks = []
+        waitingHandler.bufferedBytes = 0
+
+        try {
+          handler.onResponseError?.(waitingHandler.controller, state.reason ?? new RequestAbortedError())
+        } catch {
+          // Ignore errors from waiting handlers
+        }
+      }
+    }
+
+    return waitingHandler
+  }
+
+  /**
+   * @param {WaitingHandler} waitingHandler
+   * @param {Buffer} chunk
+   */
+  #bufferWaitingChunk (waitingHandler, chunk) {
+    if (waitingHandler.done || waitingHandler.controller.aborted) {
+      waitingHandler.done = true
+      waitingHandler.bufferedChunks = []
+      waitingHandler.bufferedBytes = 0
+      return
+    }
+
+    const bufferedChunk = Buffer.from(chunk)
+    waitingHandler.bufferedChunks.push(bufferedChunk)
+    waitingHandler.bufferedBytes += bufferedChunk.length
+
+    if (waitingHandler.bufferedBytes > this.#maxBufferSize) {
+      const err = new RequestAbortedError(`Deduplicated waiting handler exceeded maxBufferSize (${this.#maxBufferSize} bytes) while paused`)
+      waitingHandler.controller.abort(err)
+    }
+  }
+
+  /**
+   * @param {WaitingHandler} waitingHandler
+   */
+  #flushWaitingHandler (waitingHandler) {
+    const { handler, controller } = waitingHandler
+
+    while (
+      !waitingHandler.done &&
+      !controller.aborted &&
+      !controller.paused &&
+      waitingHandler.bufferedChunks.length > 0
+    ) {
+      const bufferedChunk = waitingHandler.bufferedChunks.shift()
+      waitingHandler.bufferedBytes -= bufferedChunk.length
+
+      try {
+        handler.onResponseData?.(controller, bufferedChunk)
+      } catch {
+        // Ignore errors from waiting handlers
+      }
+
+      if (controller.aborted) {
+        waitingHandler.done = true
+        waitingHandler.pendingTrailers = null
+        waitingHandler.bufferedChunks = []
+        waitingHandler.bufferedBytes = 0
+        break
+      }
+    }
+  }
+
+  /**
+   * @param {WaitingHandler} waitingHandler
    * @param {Error} err
    */
-  #notifyWaitingHandlersError (err) {
-    for (const handler of this.#waitingHandlers) {
-      const waitingController = {
-        resume () {},
-        pause () {},
-        get paused () { return false },
-        get aborted () { return true },
-        get reason () { return err },
-        abort () {}
-      }
-
-      try {
-        handler.onRequestStart?.(waitingController, null)
-        handler.onResponseError?.(waitingController, err)
-      } catch {
-        // Ignore errors from waiting handlers
-      }
+  #errorWaitingHandler (waitingHandler, err) {
+    if (waitingHandler.done) {
+      return
     }
 
-    this.#waitingHandlers = []
-    this.#chunks = []
+    waitingHandler.done = true
+    waitingHandler.pendingTrailers = null
+    waitingHandler.bufferedChunks = []
+    waitingHandler.bufferedBytes = 0
+
+    // A response failure is not a consumer abort: retry handlers must be able
+    // to retry it just as they would a failure of the primary request.
+    try {
+      waitingHandler.handler.onResponseError?.(waitingHandler.controller, err)
+    } catch {
+      // Ignore errors from waiting handlers
+    }
+  }
+
+  #pruneDoneWaitingHandlers () {
+    this.#waitingHandlers = this.#waitingHandlers.filter(waitingHandler => waitingHandler.done === false)
   }
 }
 

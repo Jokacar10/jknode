@@ -42,6 +42,7 @@
 #include "src/base/strings.h"
 #include "src/codegen/assembler-inl.h"
 #include "src/debug/debug.h"
+#include "src/flags/flags.h"
 #include "src/handles/global-handles.h"
 #include "src/heap/heap-inl.h"
 #include "src/heap/pretenuring-handler.h"
@@ -2099,8 +2100,7 @@ TEST(NativeSnapshotObjectIdMoving) {
     auto local = v8::Local<v8::String>::New(isolate, wrapper);
     i::DirectHandle<i::String> internal = i::Cast<i::String>(
         v8::Utils::OpenDirectHandle(*v8::Local<v8::String>::Cast(local)));
-    i::heap::ForceEvacuationCandidate(
-        i::PageMetadata::FromHeapObject(*internal));
+    i::heap::ForceEvacuationCandidate(i::NormalPage::FromHeapObject(*internal));
   }
   i::heap::InvokeMajorGC(CcTest::heap());
 
@@ -2174,129 +2174,6 @@ TEST(DeleteHeapSnapshot) {
   const_cast<v8::HeapSnapshot*>(s3)->Delete();
   CHECK_EQ(0, heap_profiler->GetSnapshotCount());
   CHECK(!FindHeapSnapshot(heap_profiler, s3));
-}
-
-class NameResolver : public v8::HeapProfiler::ObjectNameResolver {
- public:
-  const char* GetName(v8::Local<v8::Object> object) override {
-    return "Global object name";
-  }
-};
-
-TEST(GlobalObjectNameSimple) {
-  LocalContext env;
-  v8::HandleScope scope(env.isolate());
-  v8::HeapProfiler* heap_profiler = env.isolate()->GetHeapProfiler();
-
-  CompileRun("document = { URL:\"abcdefgh\" };");
-
-  // Allow usages of v8::HeapProfiler::ObjectNameResolver for now.
-  // TODO(https://crbug.com/333672197): remove.
-  START_ALLOW_USE_DEPRECATED()
-  NameResolver name_resolver;
-  const v8::HeapSnapshot* snapshot =
-      heap_profiler->TakeHeapSnapshot(nullptr, &name_resolver);
-  END_ALLOW_USE_DEPRECATED()
-  CHECK(ValidateSnapshot(snapshot));
-  const v8::HeapGraphNode* native_context = GetNativeContext(snapshot);
-  CHECK_NOT_NULL(native_context);
-  CHECK_EQ(std::string("system / NativeContext / Global object name"),
-           std::string(GetName(native_context)));
-
-  const v8::HeapGraphNode* global = GetGlobalObject(snapshot);
-  CHECK_NOT_NULL(global);
-  CHECK_EQ(std::string("Object (global*) / Global object name"),
-           std::string(GetName(global)));
-
-  const v8::HeapGraphNode* global_proxy = GetProperty(
-      env.isolate(), global, v8::HeapGraphEdge::kInternal, "global_proxy");
-  CHECK_NOT_NULL(global_proxy);
-  CHECK_EQ(std::string("Object (global) / Global object name"),
-           std::string(GetName(global_proxy)));
-}
-
-TEST(GlobalObjectName) {
-  v8::Isolate* isolate = CcTest::isolate();
-  v8::HandleScope scope(isolate);
-
-  v8::Local<v8::FunctionTemplate> global_constructor =
-      v8::FunctionTemplate::New(isolate);
-  global_constructor->SetClassName(v8_str("MyGlobal"));
-
-  v8::Local<v8::ObjectTemplate> global_template =
-      v8::ObjectTemplate::New(isolate, global_constructor);
-  LocalContext env(isolate, nullptr, global_template);
-
-  v8::HeapProfiler* heap_profiler = env.isolate()->GetHeapProfiler();
-
-  CompileRun("document = { URL:\"abcdefgh\" };");
-
-  // Allow usages of v8::HeapProfiler::ObjectNameResolver for now.
-  // TODO(https://crbug.com/333672197): remove.
-  START_ALLOW_USE_DEPRECATED()
-  NameResolver name_resolver;
-  const v8::HeapSnapshot* snapshot =
-      heap_profiler->TakeHeapSnapshot(nullptr, &name_resolver);
-  END_ALLOW_USE_DEPRECATED()
-  CHECK(ValidateSnapshot(snapshot));
-  const v8::HeapGraphNode* native_context = GetNativeContext(snapshot);
-  CHECK_NOT_NULL(native_context);
-  CHECK_EQ(std::string("system / NativeContext / Global object name"),
-           std::string(GetName(native_context)));
-
-  const v8::HeapGraphNode* global = GetGlobalObject(snapshot, false);
-  CHECK_NOT_NULL(global);
-  CHECK_EQ(std::string("MyGlobal (global*) / Global object name"),
-           std::string(GetName(global)));
-
-  const v8::HeapGraphNode* global_proxy = GetProperty(
-      env.isolate(), global, v8::HeapGraphEdge::kInternal, "global_proxy");
-  CHECK_NOT_NULL(global_proxy);
-  CHECK_EQ(std::string("MyGlobal (global) / Global object name"),
-           std::string(GetName(global_proxy)));
-}
-
-TEST(GlobalObjectNameDetached) {
-  v8::Isolate* isolate = CcTest::isolate();
-  v8::HandleScope scope(isolate);
-
-  v8::Local<v8::FunctionTemplate> global_constructor =
-      v8::FunctionTemplate::New(isolate);
-  global_constructor->SetClassName(v8_str("MyGlobal"));
-
-  v8::Local<v8::ObjectTemplate> global_template =
-      v8::ObjectTemplate::New(isolate, global_constructor);
-  LocalContext env(isolate, nullptr, global_template);
-
-  v8::HeapProfiler* heap_profiler = env.isolate()->GetHeapProfiler();
-
-  CompileRun("document = { URL:\"abcdefgh\" };");
-
-  env->DetachGlobal();
-
-  // Allow usages of v8::HeapProfiler::ObjectNameResolver for now.
-  // TODO(https://crbug.com/333672197): remove.
-  START_ALLOW_USE_DEPRECATED()
-  NameResolver name_resolver;
-  const v8::HeapSnapshot* snapshot =
-      heap_profiler->TakeHeapSnapshot(nullptr, &name_resolver);
-  END_ALLOW_USE_DEPRECATED()
-  CHECK(ValidateSnapshot(snapshot));
-  const v8::HeapGraphNode* native_context = GetNativeContext(snapshot);
-  CHECK_NOT_NULL(native_context);
-  CHECK_EQ(std::string("system / NativeContext / Global object name"),
-           std::string(GetName(native_context)));
-
-  const v8::HeapGraphNode* global = GetGlobalObject(snapshot, false);
-  CHECK_NOT_NULL(global);
-  CHECK_EQ(std::string("MyGlobal (global*) / Global object name"),
-           std::string(GetName(global)));
-
-  const v8::HeapGraphNode* global_proxy = GetProperty(
-      env.isolate(), global, v8::HeapGraphEdge::kInternal, "global_proxy");
-  CHECK_NOT_NULL(global_proxy);
-  CHECK_EQ(std::string("Object (global) / <detached>"),
-           std::string(GetName(global_proxy)));
 }
 
 class ContextNameResolver : public v8::HeapProfiler::ContextNameResolver {
@@ -4348,7 +4225,7 @@ TEST(SamplingHeapProfilerPretenuredInlineAllocations) {
   if (i::v8_flags.gc_global || i::v8_flags.stress_compaction ||
       i::v8_flags.stress_incremental_marking ||
       i::v8_flags.stress_concurrent_allocation ||
-      i::v8_flags.single_generation) {
+      i::v8_flags.single_generation || i::v8_flags.scavenger_chaos_mode) {
     return;
   }
 
@@ -4376,7 +4253,7 @@ TEST(SamplingHeapProfilerPretenuredInlineAllocations) {
                      "  return elements[number_elements - 1];"
                      "};"
                      "%%PrepareFunctionForOptimization(f);"
-                     "f(); gc();"
+                     "f(); gc({type: 'minor'});"
                      "f(); f();"
                      "%%OptimizeFunctionOnNextCall(f);"
                      "f();"
@@ -4438,6 +4315,82 @@ TEST(SamplingHeapProfilerLargeInterval) {
   auto node = FindAllocationProfileNode(env.isolate(), profile.get(),
                                         v8::base::ArrayVector(names));
   CHECK(node);
+
+  heap_profiler->StopSamplingHeapProfiler();
+}
+
+TEST(SamplingHeapProfilerSampleWithoutGCFlags) {
+  v8::HandleScope scope(CcTest::isolate());
+  LocalContext env;
+  v8::HeapProfiler* heap_profiler = env.isolate()->GetHeapProfiler();
+
+  // Suppress randomness to avoid flakiness in tests.
+  i::v8_flags.sampling_heap_profiler_suppress_randomness = true;
+
+  heap_profiler->StartSamplingHeapProfiler(1024);
+
+  // Allocate objects that will be retained
+  CompileRun(
+      "var retained = [];\n"
+      "for (var i = 0; i < 500; i++) retained.push(new Array(10));\n");
+
+  CompileRun("for (var i = 0; i < 500; i++) new Array(10);\n");
+
+  std::unique_ptr<v8::AllocationProfile> profile(
+      heap_profiler->GetAllocationProfile());
+  CHECK(profile);
+
+  const auto& samples = profile->GetSamples();
+  CHECK(!samples.empty());
+
+  for (const auto& sample : samples) {
+    CHECK(sample.is_live);
+  }
+
+  heap_profiler->StopSamplingHeapProfiler();
+}
+
+TEST(SamplingHeapProfilerSampleIsLive) {
+  v8::HandleScope scope(CcTest::isolate());
+  LocalContext env;
+  v8::HeapProfiler* heap_profiler = env.isolate()->GetHeapProfiler();
+
+  // Suppress randomness to avoid flakiness in tests.
+  i::v8_flags.sampling_heap_profiler_suppress_randomness = true;
+
+  heap_profiler->StartSamplingHeapProfiler(
+      64, 16,
+      static_cast<v8::HeapProfiler::SamplingFlags>(
+          v8::HeapProfiler::kSamplingForceGC |
+          v8::HeapProfiler::kSamplingIncludeObjectsCollectedByMajorGC));
+
+  // Allocate objects that will be retained
+  CompileRun(
+      "var retained = [];\n"
+      "for (var i = 0; i < 500; i++) retained.push(new Array(10));\n");
+
+  CompileRun("for (var i = 0; i < 500; i++) new Array(10);\n");
+
+  std::unique_ptr<v8::AllocationProfile> profile(
+      heap_profiler->GetAllocationProfile());
+  CHECK(profile);
+
+  const auto& samples = profile->GetSamples();
+  CHECK(!samples.empty());
+
+  int live_samples = 0;
+  int dead_samples = 0;
+  for (const auto& sample : samples) {
+    if (sample.is_live) {
+      ++live_samples;
+    } else {
+      ++dead_samples;
+    }
+  }
+
+  // We expect both retained and collected allocations in this profile.
+  CHECK_GT(live_samples, 0);
+  CHECK_GT(dead_samples, 0);
 
   heap_profiler->StopSamplingHeapProfiler();
 }
@@ -4586,6 +4539,7 @@ TEST(WeakReference) {
       shared_function, feedback_cell_array,
       direct_handle(i::Cast<i::JSFunction>(*obj)->raw_feedback_cell(),
                     i_isolate));
+  USE(fv);
 
   // Create a Code object.
   i::Assembler assm(i_isolate->allocator(), i::AssemblerOptions{});
@@ -4596,17 +4550,6 @@ TEST(WeakReference) {
       i::Factory::CodeBuilder(i_isolate, desc, i::CodeKind::FOR_TESTING)
           .Build();
   CHECK(IsCode(*code));
-
-#ifdef V8_ENABLE_LEAPTIERING
-  USE(fv);
-#else
-  // Manually inlined version of FeedbackVector::SetOptimizedCode (needed due
-  // to the FOR_TESTING code kind).
-  fv->set_maybe_optimized_code(i::MakeWeak(code->wrapper()));
-  fv->set_flags(
-      i::FeedbackVector::MaybeHasTurbofanCodeBit::encode(true) |
-      i::FeedbackVector::TieringStateBits::encode(i::TieringState::kNone));
-#endif  // V8_ENABLE_LEAPTIERING
 
   v8::HeapProfiler* heap_profiler = isolate->GetHeapProfiler();
   const v8::HeapSnapshot* snapshot = heap_profiler->TakeHeapSnapshot();
@@ -4820,8 +4763,8 @@ TEST(HeapSnapshotWithWasmInstance) {
   CHECK_NOT_NULL(trusted_instance_data_node);
   CheckProperties(
       isolate, trusted_instance_data_node,
-      {"dispatch_table0", "dispatch_table_for_imports", "dispatch_tables",
-       "instance_object", "managed_native_module", "map",
+      {"data_segments", "dispatch_table0", "dispatch_table_for_imports",
+       "dispatch_tables", "instance_object", "managed_native_module", "map",
        "memory_bases_and_sizes", "native_context", "shared_part"});
 
   // "module_object" should be the same as the global "module".
